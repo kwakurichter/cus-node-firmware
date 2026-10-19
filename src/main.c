@@ -26,6 +26,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
+#include <errno.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -39,6 +41,7 @@
 #include "button.h"
 
 #include "cfg.h"
+#include "console_input.h"
 #include "eeprom.h"
 
 #include "usb_device.h"
@@ -245,6 +248,7 @@ static void handleMenuMain(char ch, MenuState* menuState) {
       menuState->configChanged = false;
       menuState->tempId = 0;
       break;
+    case 'w': changeMode(MODE_ARDUSWARM_ANCHOR); break;
     case 'a': changeMode(MODE_ANCHOR); break;
     case 't': changeMode(MODE_TAG); break;
     case 's': changeMode(MODE_SNIFFER); break;
@@ -262,6 +266,7 @@ static void handleMenuMain(char ch, MenuState* menuState) {
       break;
     case 'd': restConfig(); break;
     case 'h':
+      printf("ArduSwarm: w selects anchor mode; @net/channel/ant/reply/timeout value; @status\r\n");
       help();
       menuState->configChanged = false;
       break;
@@ -396,7 +401,71 @@ static void handleMenuPower(char ch, MenuState* menuState) {
   }
 }
 
+// @name value followed by enter; settings apply after reboot.
+static bool handleArduSwarmConsole(char ch) {
+  static char line[48];
+  static unsigned used;
+  static bool active;
+  if (!active) {
+    if (ch != '@') { return false; }
+    active = true;
+    used = 0;
+    return true;
+  }
+  if (ch == '\r' || ch == '\n') {
+    line[used] = 0;
+    active = false;
+    if (strcmp(line, "status") == 0) {
+      uwbArduSwarmPrintStatus();
+      return true;
+    }
+    char *space = strchr(line, ' ');
+    if (space == NULL) {
+      printf("Use @net/channel/ant/reply/timeout value, or @status\r\n");
+      return true;
+    }
+    *space++ = 0;
+    errno = 0;
+    char *end;
+    unsigned long value = strtoul(space, &end, 10);
+    ConfigField field;
+    bool valid = errno == 0 && end != space && *end == 0;
+    if (strcmp(line, "net") == 0) {
+      field = cfgArduSwarmNetwork; valid &= value >= 1 && value <= 32767;
+    } else if (strcmp(line, "channel") == 0) {
+      field = cfgArduSwarmChannel; valid &= (value >= 1 && value <= 5) || value == 7;
+    } else if (strcmp(line, "ant") == 0) {
+      field = cfgArduSwarmAntennaDelay; valid &= value <= 32767;
+    } else if (strcmp(line, "reply") == 0) {
+      field = cfgArduSwarmReplyUs; valid &= value >= 1500 && value <= 20000;
+    } else if (strcmp(line, "timeout") == 0) {
+      field = cfgArduSwarmTimeoutMs; valid &= value >= 5 && value <= 200;
+    } else {
+      printf("Unknown ArduSwarm setting\r\n");
+      return true;
+    }
+    if (valid && cfgWriteU32(field, (uint32_t)value)) {
+      printf("Saved %s=%lu; reboot required\r\n", line, value);
+    } else {
+      printf("Invalid value or EEPROM write failed\r\n");
+    }
+    return true;
+  }
+  if (used < sizeof(line)-1) {
+    line[used++] = ch;
+  } else {
+    // Stay in command mode until newline; truncated commands must never execute.
+    line[0] = '!';
+  }
+  return true;
+}
+
 static void handleSerialInput(char ch) {
+  static ConsoleMavlinkFilter mavlinkFilter;
+  if (consoleConsumeMavlink(&mavlinkFilter, (uint8_t)ch, HAL_GetTick())) {
+    return;
+  }
+  if (handleArduSwarmConsole(ch)) { return; }
   static MenuState menuState = {
     .configChanged = true,
     .currentMenu = mainMenu,
@@ -606,7 +675,9 @@ static void help() {
 }
 
 static StaticTask_t xMainTask;
-static StackType_t ucMainStack[configMINIMAL_STACK_SIZE];
+// Console parsing and floating-point status output exceed the minimal task stack.
+#define MAIN_TASK_STACK_SIZE (2 * configMINIMAL_STACK_SIZE)
+static StackType_t ucMainStack[MAIN_TASK_STACK_SIZE];
 
 int main() {
   // Reset of all peripherals, Initializes the Flash interface and the Systick.
@@ -616,7 +687,7 @@ int main() {
   SystemClock_Config();
 
   // Setup main task
-  xTaskCreateStatic( main_task, "main", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, ucMainStack, &xMainTask );
+  xTaskCreateStatic( main_task, "main", MAIN_TASK_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, ucMainStack, &xMainTask );
 
   // Start the FreeRTOS scheduler
   vTaskStartScheduler();

@@ -58,7 +58,13 @@ static CfgHeader * cfgHeader = (CfgHeader*) buffer;
 static int tlvFindType(TlvArea *tlv, ConfigField type) {
   uint16_t pos = 0;
 
+  if (tlv->data == NULL || cfgHeader->tlvSize > NUMBER_OF_BYTES_READ - SIZE_HEADER - SIZE_TAIL) {
+    return -1;
+  }
   while (pos < cfgHeader->tlvSize) {
+    if (pos + 2 > cfgHeader->tlvSize || pos + 2 + tlv->data[pos+1] > cfgHeader->tlvSize) {
+      return -1;
+    }
     if (tlv->data[pos] == type) {
       return pos;
     } else {
@@ -119,7 +125,7 @@ static bool check_magic(void) {
 }
 
 static bool check_content(void) {
-  if (check_magic() && cfgHeader->tlvSize < (NUMBER_OF_BYTES_READ - SIZE_HEADER -SIZE_TAIL)) {
+  if (check_magic() && cfgHeader->tlvSize <= (NUMBER_OF_BYTES_READ - SIZE_HEADER -SIZE_TAIL)) {
     return check_crc();
   }
   printf("CONFIG\t: EEPROM magic not found!\r\n");
@@ -136,11 +142,10 @@ static bool write_defaults(void) {
   buffer[4] = 0; // Length of TLV
   buffer[5] = buffer[0] + buffer[1];
   // Write the default address
-  cfgWriteU8(cfgAddress, 0);
-  cfgWriteU8(cfgMode, MODE_ANCHOR);
-  cfgWriteU8list(cfgAnchorlist, default_anchor_list, sizeof(default_anchor_list));
+  if (!cfgWriteU8(cfgAddress, 0) || !cfgWriteU8(cfgMode, MODE_ANCHOR) ||
+      !cfgWriteU8list(cfgAnchorlist, default_anchor_list, sizeof(default_anchor_list))) { return false; }
   write_crc();
-  if (!eepromWrite(0, buffer, 7))
+  if (!eepromWrite(0, buffer, NUMBER_OF_BYTES_READ))
     return false;
   HAL_Delay(10);
   if (readData()) {
@@ -155,6 +160,7 @@ static bool write_defaults(void) {
 }
 
 void cfgInit(void) {
+  tlv.data = &buffer[SIZE_HEADER];
   if (readData()) {
     cfgHeader = (CfgHeader*) buffer;
     tlv.data = &buffer[SIZE_HEADER];
@@ -182,19 +188,22 @@ bool cfgReset(void) {
 bool cfgReadU8(ConfigField field, uint8_t * value) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
+  if (pos > -1 && tlv.data[pos+1] == 1) {
     *value = tlv.data[pos+2];
+    return true;
   }
 
-  return (pos > -1);
+  return false;
 }
 
 bool cfgWriteU8(ConfigField field, uint8_t value) {
     int pos = tlvFindType(&tlv, field);
 
     if (pos > -1) {
+      if (tlv.data[pos+1] != 1) { return false; }
       tlv.data[pos+2] = value;
     } else {
+      if (cfgHeader->tlvSize + 3 + SIZE_HEADER + SIZE_TAIL > sizeof(buffer)) { return false; }
       // Add new field at the end of the tlv
       tlv.data[cfgHeader->tlvSize] = field;
       tlv.data[cfgHeader->tlvSize+1] = 1;
@@ -203,50 +212,50 @@ bool cfgWriteU8(ConfigField field, uint8_t value) {
     }
 
     write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
+    bool written = eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
     HAL_Delay(10);
-    readData();
-    return true;
+    return readData() && check_content() && written;
 }
 
 bool cfgReadU32(ConfigField field, uint32_t * value) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
-    memcpy(value, &tlv.data[pos+2], sizeof(uint32_t));
+  if (pos < 0 || tlv.data[pos+1] != sizeof(uint32_t)) {
+    return false;
   }
-
-  return (pos > -1);
+  memcpy(value, &tlv.data[pos+2], sizeof(uint32_t));
+  return true;
 }
 
 bool cfgWriteU32(ConfigField field, uint32_t value) {
     int pos = tlvFindType(&tlv, field);
-
-    if (pos > -1) {
-      memcpy(&tlv.data[pos+2], &value, sizeof(uint32_t));
+    if (pos >= 0) {
+      if (tlv.data[pos+1] != sizeof(value)) {
+        return false;
+      }
+      memcpy(&tlv.data[pos+2], &value, sizeof(value));
     } else {
-      // Add new field at the end of the tlv
+      if (cfgHeader->tlvSize + 2 + sizeof(value) + SIZE_HEADER + SIZE_TAIL > sizeof(buffer)) {
+        return false;
+      }
       tlv.data[cfgHeader->tlvSize] = field;
-      tlv.data[cfgHeader->tlvSize+1] = sizeof(uint32_t);
-      memcpy(&tlv.data[cfgHeader->tlvSize+2], &value, sizeof(uint32_t));
-      cfgHeader->tlvSize += 2 + sizeof(uint32_t);
+      tlv.data[cfgHeader->tlvSize+1] = sizeof(value);
+      memcpy(&tlv.data[cfgHeader->tlvSize+2], &value, sizeof(value));
+      cfgHeader->tlvSize += 2 + sizeof(value);
     }
-
     write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
+    bool written = eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
     HAL_Delay(10);
-    readData();
-    return true;
+    uint32_t stored = 0;
+    return readData() && check_content() && written && cfgReadU32(field, &stored) && stored == value;
 }
 
 bool cfgReadU8list(ConfigField field, uint8_t list[], uint8_t length) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
-    memcpy(list, &tlv.data[pos+2], length);
-  }
-
-  return (pos > -1);
+  if (pos < 0 || length > tlv.data[pos+1]) { return false; }
+  memcpy(list, &tlv.data[pos+2], length);
+  return true;
 }
 
 bool cfgFieldSize(ConfigField field, uint8_t * size) {
@@ -263,11 +272,10 @@ bool cfgWriteU8list(ConfigField field, uint8_t list[], uint8_t length) {
     int pos = tlvFindType(&tlv, field);
 
     if (pos > -1) {
-      printf("Witing the list is not supported!!\r\n");
-      //tlv.data[pos+2] = value;
-      // TODO: The list can vary in length, we need to take care of that :-(
+      if (tlv.data[pos+1] != length) { return false; }
+      memcpy(&tlv.data[pos+2], list, length);
     } else {
-      // Add new field at the end of the tlv
+      if (cfgHeader->tlvSize + 2 + length + SIZE_HEADER + SIZE_TAIL > sizeof(buffer)) { return false; }
       tlv.data[cfgHeader->tlvSize] = field;
       tlv.data[cfgHeader->tlvSize+1] = length;
       memcpy(&tlv.data[cfgHeader->tlvSize+2], list, length);
@@ -275,26 +283,24 @@ bool cfgWriteU8list(ConfigField field, uint8_t list[], uint8_t length) {
     }
 
     write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
+    bool written = eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
     HAL_Delay(10);
-    readData();
-    return true;
+    return readData() && check_content() && written;
 }
 
 bool cfgReadFP32listLength(ConfigField field, uint8_t * size) {
   bool success = cfgFieldSize(field, size);
-  *size /= 4;
-  return success;
+  if (!success || (*size % sizeof(float)) != 0) { return false; }
+  *size /= sizeof(float);
+  return true;
 }
 
 bool cfgReadFP32list(ConfigField field, float list[], uint8_t length) {
   int pos = tlvFindType(&tlv, field);
 
-  if (pos > -1) {
-    memcpy(list, &tlv.data[pos+2], length*sizeof(float));
-  }
-
-  return (pos > -1);
+  if (pos < 0 || length * sizeof(float) > tlv.data[pos+1]) { return false; }
+  memcpy(list, &tlv.data[pos+2], length*sizeof(float));
+  return true;
 }
 
 bool cfgWriteFP32list(ConfigField field, float list[], uint8_t length) {
@@ -309,7 +315,9 @@ bool cfgWriteFP32list(ConfigField field, float list[], uint8_t length) {
       }
       memcpy(&tlv.data[pos+2], list, length*sizeof(float));
     } else {
-      // Add new field at the end of the tlv
+      if (cfgHeader->tlvSize + 2 + length*sizeof(float) + SIZE_HEADER + SIZE_TAIL > sizeof(buffer)) {
+        return false;
+      }
       tlv.data[cfgHeader->tlvSize] = field;
       tlv.data[cfgHeader->tlvSize+1] = length*sizeof(float);
       memcpy(&tlv.data[cfgHeader->tlvSize+2], list, length*sizeof(float));
@@ -317,10 +325,9 @@ bool cfgWriteFP32list(ConfigField field, float list[], uint8_t length) {
     }
 
     write_crc();
-    eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
+    bool written = eepromWrite(0, buffer, NUMBER_OF_BYTES_READ);
     HAL_Delay(10);
-    readData();
-    return true;
+    return readData() && check_content() && written;
 }
 
 static bool binaryMode = false;

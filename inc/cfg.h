@@ -39,6 +39,11 @@ typedef enum {
   cfgTxPower,
   cfgLowBitrate,
   cfgLongPreamble,
+  cfgArduSwarmNetwork,
+  cfgArduSwarmChannel,
+  cfgArduSwarmAntennaDelay,
+  cfgArduSwarmReplyUs,
+  cfgArduSwarmTimeoutMs,
 } ConfigField;
 
 void cfgInit();

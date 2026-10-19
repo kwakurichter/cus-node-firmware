@@ -55,6 +55,9 @@ typedef struct uwbConfig_s {
 #define MODE_SNIFFER 2
 #define MODE_TDOA_ANCHOR2 3
 #define MODE_TDOA_ANCHOR3 4
+#define MODE_ARDUSWARM_ANCHOR 5
+
+void uwbArduSwarmPrintStatus(void);
 
 typedef enum uwbEvent_e {
   eventTimeout,

@@ -38,6 +38,7 @@
 // Implemented UWB algoritm. The dummy one is at the end of this file.
 static uwbAlgorithm_t dummyAlgorithm;
 extern uwbAlgorithm_t uwbTwrAnchorAlgorithm;
+extern uwbAlgorithm_t uwbArduSwarmAnchorAlgorithm;
 extern uwbAlgorithm_t uwbTwrTagAlgorithm;
 extern uwbAlgorithm_t uwbSnifferAlgorithm;
 extern uwbAlgorithm_t uwbTdoaAlgorithm;
@@ -49,11 +50,20 @@ struct {
   uwbAlgorithm_t *algorithm;
   char *name;
 } availableAlgorithms[] = {
+#if ARDUSWARM_ONLY
+  {.algorithm = &dummyAlgorithm, .name = "Unavailable (ArduSwarm build)"},
+  {.algorithm = &dummyAlgorithm, .name = "Unavailable (ArduSwarm build)"},
+  {.algorithm = &dummyAlgorithm, .name = "Unavailable (ArduSwarm build)"},
+  {.algorithm = &dummyAlgorithm, .name = "Unavailable (ArduSwarm build)"},
+  {.algorithm = &dummyAlgorithm, .name = "Unavailable (ArduSwarm build)"},
+#else
   {.algorithm = &uwbTwrAnchorAlgorithm, .name = "TWR Anchor"},
   {.algorithm = &uwbTwrTagAlgorithm,    .name = "TWR Tag"},
   {.algorithm = &uwbSnifferAlgorithm,   .name = "Sniffer"},
   {.algorithm = &uwbTdoa2Algorithm,     .name = "TDoA Anchor V2"},
   {.algorithm = &uwbTdoa3Algorithm,     .name = "TDoA Anchor V3"},
+#endif
+  {.algorithm = &uwbArduSwarmAnchorAlgorithm, .name = "ArduSwarm TWR Anchor"},
   {NULL, NULL},
 };
 

@@ -7,6 +7,8 @@ PYTHON           ?= python3
 # CFLAGS += -DUSE_FTDI_UART
 
 BOOTLOAD          ?= 0
+# Keep SRAM available for the console stack and USB receive queue.
+ARDUSWARM_ONLY    ?= 1
 
 ifeq ($(strip $(REV)),A)
 $(error Rev.A not supported anymore)
@@ -35,6 +37,7 @@ HALS+=i2c_ex
 OBJS+=src/main.o
 OBJS+=src/usb_device.o src/usbd_cdc_if.o src/usbd_desc.o src/lps25h.o src/led.o src/button.o
 OBJS+=src/cfg.o src/usbcomm.o src/test_support.o src/production_test.o
+OBJS+=src/uwb_arduswarm_anchor.o
 OBJS+=src/uwb.o src/uwb_twr_anchor.o src/uwb_sniffer.o src/uwb_twr_tag.o
 OBJS+=src/lpp.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o
 
@@ -55,6 +58,10 @@ OBJS+=src/dwOps.o
 
 CFLAGS+=$(PROCESSOR) $(INCLUDES) -O3 -g3 -Wall -Wno-pointer-sign -std=gnu11
 CFLAGS+=$(EXTRA_CFLAGS)
+ifeq ($(strip $(ARDUSWARM_ONLY)),1)
+CFLAGS+=-DARDUSWARM_ONLY=1
+OBJS:=$(filter-out src/uwb_twr_anchor.o src/uwb_twr_tag.o src/uwb_sniffer.o src/uwb_tdoa_anchor2.o src/uwb_tdoa_anchor3.o,$(OBJS))
+endif
 LDFLAGS+=$(PROCESSOR) --specs=nano.specs --specs=nosys.specs -lm -lc -u _printf_float
 
 ifeq ($(strip $(BOOTLOAD)),0)
