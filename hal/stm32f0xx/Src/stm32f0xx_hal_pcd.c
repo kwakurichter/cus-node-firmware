@@ -1079,19 +1079,19 @@ PCD_StateTypeDef HAL_PCD_GetState(PCD_HandleTypeDef *hpcd)
   */
 void PCD_WritePMA(USB_TypeDef  *USBx, uint8_t *pbUsrBuf, uint16_t wPMABufAddr, uint16_t wNBytes)
 {
-  uint32_t n = (wNBytes + 1) >> 1;
-  uint32_t i;
-  uint16_t temp1, temp2;
-  uint16_t *pdwVal;
-  pdwVal = (uint16_t *)(wPMABufAddr + (uint32_t)USBx + 0x400);
+  /* USB packet memory does not support 32-bit accesses (RM0091). */
+  __IO uint16_t *pdwVal = (__IO uint16_t *)(wPMABufAddr + (uint32_t)USBx + 0x400);
 
-  for (i = n; i != 0; i--)
+  while (wNBytes >= 2)
   {
-    temp1 = (uint16_t) * pbUsrBuf;
-    pbUsrBuf++;
-    temp2 = temp1 | (uint16_t) * pbUsrBuf << 8;
-    *pdwVal++ = temp2;
-    pbUsrBuf++;
+    uint16_t value = (uint16_t)pbUsrBuf[0] | ((uint16_t)pbUsrBuf[1] << 8);
+    *pdwVal++ = value;
+    pbUsrBuf += 2;
+    wNBytes -= 2;
+  }
+  if (wNBytes != 0)
+  {
+    *pdwVal = *pbUsrBuf;
   }
 }
 
@@ -1105,14 +1105,19 @@ void PCD_WritePMA(USB_TypeDef  *USBx, uint8_t *pbUsrBuf, uint16_t wPMABufAddr, u
   */
 void PCD_ReadPMA(USB_TypeDef  *USBx, uint8_t *pbUsrBuf, uint16_t wPMABufAddr, uint16_t wNBytes)
 {
-  uint32_t n = (wNBytes + 1) >> 1;
-  uint32_t i;
-  uint16_t *pdwVal;
-  pdwVal = (uint16_t *)(wPMABufAddr + (uint32_t)USBx + 0x400);
-  for (i = n; i != 0; i--)
+  /* Keep PMA accesses 16-bit and permit unaligned user buffers. */
+  __IO uint16_t *pdwVal = (__IO uint16_t *)(wPMABufAddr + (uint32_t)USBx + 0x400);
+
+  while (wNBytes >= 2)
   {
-    *(uint16_t*)pbUsrBuf++ = *pdwVal++;
-    pbUsrBuf++;
+    uint16_t value = *pdwVal++;
+    *pbUsrBuf++ = (uint8_t)value;
+    *pbUsrBuf++ = (uint8_t)(value >> 8);
+    wNBytes -= 2;
+  }
+  if (wNBytes != 0)
+  {
+    *pbUsrBuf = (uint8_t)*pdwVal;
   }
 }
 

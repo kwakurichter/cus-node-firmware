@@ -97,7 +97,8 @@ USBD_HandleTypeDef  *hUsbDevice_0;
 
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
-#define RX_Q_SIZE 10
+/* Buffer two full USB packets, including pasted console commands. */
+#define RX_Q_SIZE (2 * APP_RX_DATA_SIZE)
 #define TX_Q_SIZE 512
 #define Q_ITEM_SIZE (sizeof(uint8_t))
 
@@ -265,10 +266,12 @@ static int8_t CDC_Control_FS  (uint8_t cmd, uint8_t* pbuf, uint16_t length)
   */
 static int8_t CDC_Receive_FS (uint8_t* Buf, uint32_t *Len)
 {
+  BaseType_t higherPriorityTaskWoken = pdFALSE;
   for (int i=0; i<*Len; i++) {
-    xQueueSend(rxq, &Buf[i], 0);
+    xQueueSendFromISR(rxq, &Buf[i], &higherPriorityTaskWoken);
   }
   USBD_CDC_ReceivePacket(hUsbDevice_0);
+  portYIELD_FROM_ISR(higherPriorityTaskWoken);
 
   return (USBD_OK);
 }
